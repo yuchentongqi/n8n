@@ -1,0 +1,794 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// 直接读取上游HTTP原生正文，无需走选择[0]封装层\nconst rawText = $input.first().json.choices[0].message.content ?? \"\";\nconsole.log(\"原生文章原文：\", rawText);\n\nif (!rawText) {\n  return { safe_article: \"无文章内容\" };\n}\n\n// JSON安全转义，给后面摘要HTTP接口用\nconst safeArticle = rawText\n  .replace(/\\\\/g, '\\\\\\\\')\n  .replace(/\"/g, '\\\\\"')\n  .replace(/\\n/g, '\\\\n')\n  .replace(/\\r/g, '\\\\r');\n\nreturn {\n  safe_article: safeArticle\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -32
+      ],
+      "id": "bc52c177-f00c-40e5-9f63-0e5052b5d20b",
+      "name": "改文本格式1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 直接拿上游JS输出的文章文本\nconst text = $json.article_text || \"\";\n\n// 空判断\nif (!text.trim()) {\n  return [{\n    json: {\n      feishu: JSON.stringify({ text: \"❌ 错误：未获取到内容\" })\n    }\n  }];\n}\n\n// 下面你原来的标题、摘要、寄语提取+飞书拼接代码完全不动\nconst titleMatch = text.match(/【标题】\\s*《([^》]+)》/);\nconst title = titleMatch ? titleMatch[1].trim() : \"未命名随笔\";\n\nconst summaryMatch = text.match(/【摘要】\\s*([\\s\\S]*?)\\s*(?=\\n【寄语】|$)/);\nconst summary = summaryMatch ? summaryMatch[1].trim() : \"\";\n\nconst quoteMatch = text.match(/【寄语】\\s*([\\s\\S]*)/);\nconst quote = quoteMatch ? quoteMatch[1].trim() : \"愿你被世界温柔以待\";\n\nlet reportText = \"📊 【n8n采编员 · 随笔自动推送】\\n\";\nreportText += \"━━━━━━━━━━━━━━\\n\\n\";\nreportText += `《${title}》\\n`;\nreportText += `摘要：${summary}\\n\\n`;\nreportText += \"💌 今日寄语\\n\";\nreportText += `${quote}\\n\\n`;\nreportText += \"━━━━━━━━━━━━━━\\n\";\nreportText += \"📈 采编统计\\n\";\nreportText += \"• 采编文章：1 篇\\n\";\nreportText += `⏰ 采编时间：${new Date().toLocaleString(\"zh-CN\", { timeZone: \"Asia/Shanghai\" })}\\n`;\nreportText += \"🤖 采编专员：n8n采编员\";\n\nconst feishuMessage = JSON.stringify({ text: reportText });\nreturn [{ json: { feishu: feishuMessage } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        -32
+      ],
+      "id": "67e89f8d-50e0-490a-b44a-6b5f482d2a82",
+      "name": "改摘要格式1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"qwen3.7-flash\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是「与尘同栖」的专属治愈系编辑。请严格按以下格式输出：\\n【标题】\\n《文章标题》\\n【摘要】\\n摘要内容（40-60字）\\n【寄语】\\n一句治愈金句\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"文章：{{ $json.safe_article }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        80,
+        -32
+      ],
+      "id": "97e4dc11-faed-4764-b222-de8fe70b678b",
+      "name": "摘要输出1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 直接读取HTTP原生返回正文\nconst rawText = $input.first().json.choices[0].message.content || \"\";\n\n// JSON转义，传给下一个节点\nconst safeText = rawText\n.replace(/\\\\/g, '\\\\\\\\')\n.replace(/\"/g, '\\\\\"')\n.replace(/\\n/g, '\\\\n')\n.replace(/\\r/g, '\\\\r');\n\nreturn [{\n  json: {\n    article_text: rawText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        -32
+      ],
+      "id": "85ebfcfb-6d2e-4608-943a-15a6766c0adc",
+      "name": "Code in JavaScript8"
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n    // 优先读取手动拆分的title\n    let originalTitle = item.json.title?.trim() || \"\";\n    const fullText = item.json.raw_full_text ?? '';\n\n    // 第一行截取失效时，正则兜底抓取标题\n    if (!originalTitle) {\n        const titleReg = /【标题】\\s*\\n*\\s*[《]?([^《》\\n]+)[》]?/;\n        const match = fullText.match(titleReg);\n        originalTitle = match && match[1].trim() ? match[1].trim() : \"无名随笔\";\n    } else {\n        // 清理第一行自带的【标题】《》标记\n        const innerMatch = originalTitle.match(/【标题】\\s*[《]?([^《》]+)[》]?/);\n        if (innerMatch) originalTitle = innerMatch[1].trim();\n    }\n\n    let cleanTitle = originalTitle;\n    cleanTitle = cleanTitle.replace(/标题[:：\\s=]*/g, '');\n    cleanTitle = cleanTitle.replace(/^\\*+|\\*+$/g, '');\n    cleanTitle = cleanTitle.replace(/#/g, ''); // 删除所有 # 符号\n    cleanTitle = cleanTitle.trim();\n    cleanTitle = `《${cleanTitle}》`;\n\n    // 同步覆盖两个字段，WP随便绑定哪个都生效\n    item.json.title = cleanTitle;\n    item.json.post_title = cleanTitle;\n}\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        256
+      ],
+      "id": "56c013ae-a6d8-4dc9-9a73-11a5d7cca346",
+      "name": "去掉标题格式1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        976,
+        448
+      ],
+      "id": "a731ff6b-21ac-4cbb-9ec6-57a89570d67c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst mediaItem = items[0].json;\nconst articleItem = items[1].json;\n\n// 1. 处理正文\nlet content = articleItem.content || '';\n\n// 去掉开头多余换行，标题和正文无缝衔接\ncontent = content.replace(/^\\n+/, '');\n\n// 段落之间正常换行\ncontent = content.replace(/\\n+/g, '<br><br>');\n\n// 删掉旧的版权声明\ncontent = content.replace(/本文为「与尘同栖」原创随笔，禁止未经授权的转载或搬运。\\s*$/g, '');\n\n// 加上你要的结尾文案（只加这一次）\ncontent += `\n<br><br>\n余生漫漫，以文寄心，与尘同栖。\n喜欢这篇随笔，别忘了点击文末「阅读原文」，前往晚风书隅品读更多同主题文字\n`;\n\n// 2. 生成公众号完整 JSON，包含 author 字段\nconst finalArticle = [{\n  article_type: \"news\",\n  title: articleItem.title,\n  thumb_media_id: mediaItem.media_id,\n  content: content,\n  author: \"yuchen\"\n}];\n\n// 输出\nreturn [{\n  json: {\n    finalArticleString: JSON.stringify(finalArticle)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        448
+      ],
+      "id": "9345a31e-ab99-4cf0-8b30-4516cc827bec",
+      "name": "Code in JavaScript9"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5b7a4b17-83ec-4bfb-87a8-e7a000b2983a",
+              "name": "articles",
+              "value": "={{ $json.finalArticleString }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1424,
+        448
+      ],
+      "id": "55709cbe-c8f2-468e-b27d-155f016ce745",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3386ad84-8c05-4c83-81a1-1cd8ca64dd39",
+              "name": "essay_content",
+              "value": "{{ $json.data.replace(/<think>[\\s\\S]*?<\\/think>/, '').trim() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        352
+      ],
+      "id": "756b7516-8f6d-4b27-bf5f-984f85d1bfba",
+      "name": "编辑公众号文字1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 20
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -816,
+        256
+      ],
+      "id": "843a8837-810e-49ee-b1a3-f9ff24bc6c7e",
+      "name": "晚上八点1"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.pexels.com/v1/search?query={{ encodeURI($json.title + \" nature landscape forest -people -human -person\") }}&per_page=1&page={{ Math.floor(Math.random() * 100) + 1 }}&orientation=landscape&size=medium",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -128,
+        640
+      ],
+      "id": "16d1c48a-6818-437a-beba-020fbedc43db",
+      "name": "生成照片"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "587dcb14-9781-4505-b079-4ee1c8bc12e9",
+              "leftValue": "={{ $json.file_size_b }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        640
+      ],
+      "id": "5b6b35a5-c3ce-41b4-bc46-8f0bf3043491",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 从自身json取次数，没有就是0\nlet count = $json.retry_times || 0;\ncount = count + 1;\n\nreturn [{\n    json: {\n        retry_times: count\n    }\n}]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        736
+      ],
+      "id": "f82be98b-06a4-482c-b2ad-8492ef686af5",
+      "name": "Code in JavaScript10"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9f710163-1cd0-464b-bbe0-1fb2d1bd8ff2",
+              "leftValue": "={{$json.retry_times}}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        976,
+        800
+      ],
+      "id": "4a69378a-75cc-4dbe-8dec-5b993be0add9",
+      "name": "If3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 接收上一步输出\nconst item = $json;\nlet reportText = \"⚠️ 【n8n报错员 · 流程异常提醒】\\n━━━━━━━━━━━━━━\\n\\n\";\n\n// 固定提示：图片超过3次重试\nreportText += \"📊 错误详情\\n\";\nreportText += \"出错节点：图片大小校验\\n\";\nreportText += \"错误信息：图片体积过大，连续重试超过3次，自动终止流程\\n\\n\";\n\nreportText += \"━━━━━━━━━━━━━━\\n\";\nreportText += \"⏰ 报错时间：\" + new Date().toLocaleString(\"zh-CN\", { timeZone: \"Asia/Shanghai\" }) + \"\\n\";\nreportText += \"🤖 报错专员：n8n报错员\";\n\n// 飞书消息封装\nreturn [{\n  json:{\n    feishu:JSON.stringify({text:reportText})\n  }\n}]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        816
+      ],
+      "id": "3c6c6484-ccd1-4042-9fb9-0498442de978",
+      "name": "Code in JavaScript11"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfe49104-69e0-4310-8af5-37eefbd4788c",
+              "name": "file_size_b",
+              "value": "={{\n($binary.data.fileSize.includes('MB') \n? Number($binary.data.fileSize.replace('MB','')) \n: Number($binary.data.fileSize.replace('kB',''))/1024)\n}}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        304,
+        640
+      ],
+      "id": "4fad2d1b-15dd-44f1-9df6-0ab465921688",
+      "name": "调整大小1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========== 主题池（示例，请替换为你自己的素材） ==========\nconst themes = [\n  '春日晚风',\n  '旧书与慢时光',\n  // 请在此处添加更多主题，建议30个以上\n  '示例主题3',\n  '示例主题4'\n];\n\n// ========== 情绪池（示例） ==========\nconst moods = [\n  '安静的',\n  '有点疲惫的',\n  // 请在此处添加更多情绪\n  '示例情绪3'\n];\n\n// ========== 细节池（示例） ==========\nconst details = [\n  '晾衣服时发现一只袜子的松紧带松了',\n  // 请在此处添加更多细节\n  '示例细节3'\n];\n\n// ========== 感官池（示例） ==========\nconst senses = [\n  '雨后空气里的泥土味',\n  // 请在此处添加更多感官\n  '示例感官3'\n];\n\n// ========== 随机抽取（逻辑保持不变） ==========\nconst theme = themes[Math.floor(Math.random() * themes.length)];\nconst mood = moods[Math.floor(Math.random() * moods.length)];\nconst detail = details[Math.floor(Math.random() * details.length)];\nconst sense = senses[Math.floor(Math.random() * senses.length)];\n\nreturn { theme, mood, detail, sense };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        256
+      ],
+      "id": "b92df8c6-350b-4ff1-b982-3e273ffb14b6",
+      "name": "挑选提示词"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"deepseek-v4-flash-0731\",\n  \"max_tokens\": 7000,\n  \"temperature\": 0.92,\n  \"top_p\": 0.95,\n  \"frequency_penalty\": 0.45,\n  \"presence_penalty\": 0.45,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"请在此填写你的系统提示词（System Prompt）。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"请以「{{ $json.theme }}」为主题，结合情绪「{{ $json.mood }}」和细节「{{ $json.detail }}」进行创作。\\n\\n【请在此处替换为你自己的完整原创提示词，包含写作要求、字数、风格等】\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -368,
+        256
+      ],
+      "id": "3639799b-0afd-42cb-a80a-886cc05ed7dd",
+      "name": "生成ai文章"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "71d05ab2-390f-46d7-a6b0-ddd192add7cd",
+              "name": "content",
+              "value": "={{ $json.choices[0].message.content.split(\"\\n\").slice(1).join(\"\\n\\n\") }}\n<br><br><br>尾注，可以自己填写。",
+              "type": "string"
+            },
+            {
+              "id": "fd9286a0-e042-45d0-90c7-f8756800956b",
+              "name": "raw_full_text",
+              "value": "={{ $json.choices[0].message.content }}",
+              "type": "string"
+            },
+            {
+              "id": "b6c440a3-1a64-4b2b-930e-26bbe7d78ddd",
+              "name": "title",
+              "value": "={{ $json.choices[0].message.content.split(\"\\n\")[0] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        304,
+        256
+      ],
+      "id": "6f194c1a-3d02-4e51-859f-d7e0745c0680",
+      "name": "尾注"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "message:send"
+      },
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        752,
+        -32
+      ],
+      "id": "fbf096bf-79b2-4f60-904f-8e2cf2a8f5e8",
+      "name": "摘要推送",
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "g4FPF7D0lONaTarR",
+          "name": "ai agent"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.wordpress",
+      "typeVersion": 1,
+      "position": [
+        752,
+        160
+      ],
+      "id": "e9236e04-6aa4-4a0a-91a1-136c3e5850b6",
+      "name": "Create a post",
+      "credentials": {
+        "wordpressApi": {
+          "id": "lFISkG1vNa7wqX3h",
+          "name": "与尘同栖"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.photos[0]?.src?.original || \"\" }}\n",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        80,
+        640
+      ],
+      "id": "3d56932a-53e0-49f8-b54a-29b38f831d7f",
+      "name": "照片加工"
+    },
+    {
+      "parameters": {
+        "resource": "media",
+        "operation": "media:uploadOther"
+      },
+      "type": "n8n-nodes-wechat-offiaccount.wechatOfficialAccountNode",
+      "typeVersion": 1,
+      "position": [
+        752,
+        544
+      ],
+      "id": "839c2cfa-3d1e-4bfb-a31b-783460f9038c",
+      "name": "生成照片到素材库",
+      "credentials": {
+        "wechatOfficialAccountCredentialsApi": {
+          "id": "uS1IdT5kdL1gCnrN",
+          "name": "Wechat Official Account Credentials account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "message:send"
+      },
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        1424,
+        816
+      ],
+      "id": "6c26ec58-dcfa-4b01-8fbe-9ae4d6654bff",
+      "name": "报错",
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "g4FPF7D0lONaTarR",
+          "name": "ai agent"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "draft:add",
+        "articles": "={{ $json.articles }}"
+      },
+      "type": "n8n-nodes-wechat-offiaccount.wechatOfficialAccountNode",
+      "typeVersion": 1,
+      "position": [
+        1648,
+        448
+      ],
+      "id": "b2c6956f-d030-4c97-85d0-fdb0ae805d07",
+      "name": "发布草稿",
+      "credentials": {
+        "wechatOfficialAccountCredentialsApi": {
+          "id": "uS1IdT5kdL1gCnrN",
+          "name": "Wechat Official Account Credentials account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "改文本格式1": {
+      "main": [
+        [
+          {
+            "node": "摘要输出1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "改摘要格式1": {
+      "main": [
+        [
+          {
+            "node": "摘要推送",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "摘要输出1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript8": {
+      "main": [
+        [
+          {
+            "node": "改摘要格式1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "去掉标题格式1": {
+      "main": [
+        [
+          {
+            "node": "编辑公众号文字1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create a post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript9": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "发布草稿",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "编辑公众号文字1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "生成照片": {
+      "main": [
+        [
+          {
+            "node": "照片加工",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "生成照片到素材库",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript10": {
+      "main": [
+        [
+          {
+            "node": "If3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If3": {
+      "main": [
+        [
+          {
+            "node": "生成照片",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript11": {
+      "main": [
+        [
+          {
+            "node": "报错",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "调整大小1": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "晚上八点1": {
+      "main": [
+        [
+          {
+            "node": "挑选提示词",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "挑选提示词": {
+      "main": [
+        [
+          {
+            "node": "生成ai文章",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成ai文章": {
+      "main": [
+        [
+          {
+            "node": "改文本格式1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "尾注",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "生成照片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "尾注": {
+      "main": [
+        [
+          {
+            "node": "去掉标题格式1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "照片加工": {
+      "main": [
+        [
+          {
+            "node": "调整大小1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成照片到素材库": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "cc4b93ff-0e8d-4d5b-bd7e-e255652bc96c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9acaee820fd1b5649a92b6532ed5d6dbab3e0b0ad9926c4d073ac0fc40a75883"
+  },
+  "id": "eZyntPpUs9AdaqiV",
+  "tags": []
+}
