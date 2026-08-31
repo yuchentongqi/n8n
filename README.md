@@ -1,4 +1,4 @@
-这是我发布的第二个，是一个n8n自动化流程生成文章并且发布到微信公众号，WordPress，以及小程序上面。
+这是我发布的第二个，是一个n8n自动化流程生成文章并且发布到微信公众号，WordPress，以及小程序上面。（小程序需要再小程序开发平台里面调用WordPress的api）
 
 需要下载的社区节点有微信和飞书，两个节点：  n8n-nodes-feishu-lite  和  n8n-nodes-wechat-offiaccount 我用的这两的社区节点。
 
